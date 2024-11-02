@@ -2,7 +2,8 @@ import pandas as pd
 import random
 import uuid
 from dataclasses import dataclass, asdict
-from typing import List
+from typing import Any, List
+import numpy as np
 
 
 @dataclass
@@ -18,13 +19,16 @@ class PaymentDetail:
 class Product:
     product_id: str
     product_category_name: str
-    product_name_length: int
-    product_description_length: int
+    product_name_lenght: int
+    product_description_lenght: int
     product_photos_qty: int
     product_weight_g: int
     product_length_cm: int
     product_height_cm: int
     product_width_cm: int
+
+    def to_dict(self):
+        return asdict(self)
 
 
 @dataclass
@@ -43,6 +47,9 @@ class Seller:
     seller_city: str
     seller_state: str
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class OrderItem:
@@ -54,6 +61,12 @@ class OrderItem:
     price: float
     freight_value: float
 
+    product: Product
+    seller: Seller
+
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class Review:
@@ -64,6 +77,9 @@ class Review:
     review_comment_message: str
     review_creation_date: pd.Timestamp
     review_answer_timestamp: pd.Timestamp
+
+    def to_dict(self):
+        return asdict(self)
 
 
 @dataclass
@@ -100,6 +116,29 @@ class EcommerceSeeder:
         self._order_item_index = 0
         self._review_index = 0
         self._order_index = 0
+        self._geolocation_index = 0
+
+    def get_geolocation(self, batch_size: int) -> List[Geolocation]:
+        geolocations = []
+
+        for _ in range(batch_size):
+            if self._geolocation_index >= len(self._geolocation):
+                break
+
+            row = self._geolocation.iloc[self._geolocation_index]
+            self._geolocation_index += 1
+
+            geolocations.append(
+                Geolocation(
+                    geolocation_zip_code_prefix=row["geolocation_zip_code_prefix"],
+                    geolocation_lat=row["geolocation_lat"],
+                    geolocation_lng=row["geolocation_lng"],
+                    geolocation_city=row["geolocation_city"],
+                    geolocation_state=row["geolocation_state"],
+                )
+            )
+
+        return geolocations
 
     def get_product(self) -> Product:
         row = self._products.iloc[self._product_index]
@@ -107,8 +146,8 @@ class EcommerceSeeder:
         return Product(
             product_id=row["product_id"],
             product_category_name=row["product_category_name"],
-            product_name_length=row["product_name_length"],
-            product_description_length=row["product_description_length"],
+            product_name_lenght=row["product_name_length"],
+            product_description_lenght=row["product_description_length"],
             product_photos_qty=row["product_photos_qty"],
             product_weight_g=row["product_weight_g"],
             product_length_cm=row["product_length_cm"],
@@ -127,6 +166,35 @@ class EcommerceSeeder:
             payment_value=row["payment_value"],
         )
 
+    def get_product_by_id(self, product_id: str) -> Product:
+        # Query the products DataFrame for the matching product_id
+        row: Any = self._products[self._products["product_id"] == product_id]
+        if row.empty:
+            raise ValueError(f"Product with ID {product_id} not found.")
+
+        # print(row["product_category_name"].iloc[0])
+
+        return Product(
+            product_id=row["product_id"].iloc[0],
+            product_category_name=str(row["product_category_name"].iloc[0]),
+            product_name_lenght=row["product_name_lenght"].iloc[0],
+            product_description_lenght=row["product_description_lenght"].iloc[0],
+            product_photos_qty=row["product_photos_qty"].iloc[0],
+            product_weight_g=row["product_weight_g"].iloc[0],
+            product_length_cm=row["product_length_cm"].iloc[0],
+            product_height_cm=row["product_height_cm"].iloc[0],
+            product_width_cm=row["product_width_cm"].iloc[0],
+        )
+
+    def get_seller_by_id(self, seller_id: str) -> Seller:
+        row: Any = self._sellers[self._sellers["seller_id"] == seller_id]
+        return Seller(
+            seller_id=row["seller_id"].iloc[0],
+            seller_zip_code_prefix=int(row["seller_zip_code_prefix"].iloc[0]),
+            seller_city=row["seller_city"].iloc[0],
+            seller_state=row["seller_state"].iloc[0],
+        )
+
     def get_order_item(self, order_id: str, row) -> OrderItem:
         # row = self._order_items.iloc[self._order_item_index]
         # self._order_item_index = (self._order_item_index + 1) % len(self._order_items)
@@ -138,7 +206,35 @@ class EcommerceSeeder:
             shipping_limit_date=pd.to_datetime(row["shipping_limit_date"]),
             price=float(row["price"]),
             freight_value=float(row["freight_value"]),
+            product=self.get_product_by_id(row["product_id"]),
+            seller=self.get_seller_by_id(row["seller_id"]),
         )
+
+    def get_review_batch(self, batch_size: int) -> List[Geolocation]:
+        container = []
+
+        for _ in range(batch_size):
+            if self._review_index >= len(self._order_reviews):
+                break
+
+            row = self._order_reviews.iloc[self._review_index]
+            self._review_index += 1
+
+            container.append(
+                Review(
+                    review_id=row.get("review_id"),
+                    order_id=row.get("order_id"),
+                    review_score=row.get("review_score", 3),
+                    review_comment_title=row.get("review_comment_title", ""),
+                    review_comment_message=row.get("review_comment_message", ""),
+                    review_creation_date=pd.to_datetime(row["review_creation_date"]),
+                    review_answer_timestamp=pd.to_datetime(
+                        row["review_answer_timestamp"]
+                    ),
+                )
+            )
+
+        return container
 
     def get_review(self, order_id: str) -> Review:
         row = self._order_reviews.iloc[self._review_index]
@@ -152,6 +248,10 @@ class EcommerceSeeder:
             review_creation_date=pd.to_datetime(row["review_creation_date"]),
             review_answer_timestamp=pd.to_datetime(row["review_answer_timestamp"]),
         )
+
+    def generate_review(self, num_geolocation: int, batch_size: int = 100):
+        for _ in range(num_geolocation):
+            yield self.get_review_batch(batch_size)
 
     def get_order(self) -> Order:
         row = self._orders.iloc[self._order_index]
@@ -194,13 +294,17 @@ class EcommerceSeeder:
         for _ in range(num_orders):
             yield self.get_order()
 
+    def generate_geolocation(self, num_geolocation: int, batch_size: int = 100):
+        for _ in range(num_geolocation):
+            yield self.get_geolocation(batch_size)
+
     def get_random_product(self) -> Product:
         row = self._products.sample(1).iloc[0]
         return Product(
             product_id=row["product_id"],
             product_category_name=row["product_category_name"],
-            product_name_length=row["product_name_length"],
-            product_description_length=row["product_description_length"],
+            product_name_lenght=row["product_name_length"],
+            product_description_lenght=row["product_description_lenght"],
             product_photos_qty=row["product_photos_qty"],
             product_weight_g=row["product_weight_g"],
             product_length_cm=row["product_length_cm"],
@@ -228,6 +332,8 @@ class EcommerceSeeder:
             shipping_limit_date=pd.to_datetime(row["shipping_limit_date"]),
             price=float(row["price"]),
             freight_value=float(row["freight_value"]),
+            product=self.get_product_by_id(row["product_id"]),
+            seller=self.get_seller_by_id(row["seller_id"]),
         )
 
     def get_random_review(self, order_id: str) -> Review:

@@ -1,9 +1,12 @@
 from typing import Any
+from numpy import source
 from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.partitioning import PartitionSpec, PartitionField
-from pyiceberg.transforms import DayTransform, YearTransform
+from pyiceberg.transforms import DayTransform, YearTransform, IdentityTransform
 from pyiceberg.schema import Schema
 from pyiceberg.types import (
+    IntegerType,
+    LongType,
     TimestampType,
     FloatType,
     DoubleType,
@@ -11,6 +14,8 @@ from pyiceberg.types import (
     NestedField,
     StructType,
 )
+from pyiceberg.exceptions import NoSuchTableError
+
 import uuid
 from datetime import date, datetime, timezone
 
@@ -20,39 +25,26 @@ import pyarrow as pa
 import pandas as pd
 
 seeder = EcommerceSeeder()
-order = next(seeder.generate_random_orders(1))
-df = pd.DataFrame(order_to_dataframe(order))
+# order = next(seeder.generate_random_orders(1))
+# df = pd.DataFrame(order_to_dataframe(order))
 
-selected_df = df[["order_purchase_timestamp", "order_delivered_customer_date"]]
+order_select = [
+    "order_purchase_timestamp",
+    "order_delivered_customer_date",
+    "order_status",
+    "order_approved_at",
+    "order_delivered_carrier_date",
+    "order_estimated_delivery_date",
+    "order_id",
+    "customer_id",
+]
 
-table = pa.Table.from_pandas(selected_df)
-
-# table = pa.Table.from_pandas(df)
-
-
-# print(table)
-
-# data = {
-#     "id": [1, 2, 3],
-#     "name": ["Alice", "Bob", None],  # 'None' here will cause a null type
-#     "amount": [100.5, None, 150.75],  # 'None' here will cause a null type
-# }
-# df = pd.DataFrame(data)
+# selected_df = df[select]
 #
-# # Define explicit schema with nullable fields for PyArrow
-# schema = pa.schema(
-#     [
-#         ("id", pa.int64()),  # Non-nullable integer
-#         ("name", pa.string()),  # Nullable string
-#         ("amount", pa.float64()),  # Nullable float
-#     ]
-# )
-
-# table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
-
+# table = pa.Table.from_pandas(selected_df)
 
 pg_conn = "postgresql+psycopg2://postgres:postgres@localhost:5432/postgres"
-#
+
 catalog = SqlCatalog(
     "default",
     **{
@@ -65,41 +57,9 @@ catalog = SqlCatalog(
         "s3.region": "us-west-1",
     },
 )
-#
-#
-catalog.create_namespace_if_not_exists("default")
-#
-# schema = Schema(
-#     NestedField(field_id=1, name="datetime", field_type=TimestampType(), required=True),
-#     # NestedField(field_id=2, name="symbol", field_type=StringType(), required=True),
-#     # NestedField(field_id=3, name="bid", field_type=FloatType(), required=False),
-#     # NestedField(field_id=4, name="ask", field_type=DoubleType(), required=False),
-#     # NestedField(
-#     #     field_id=5,
-#     #     name="details",
-#     #     field_type=StructType(
-#     #         NestedField(
-#     #             field_id=4, name="created_by", field_type=StringType(), required=False
-#     #         ),
-#     #     ),
-#     #     required=False,
-#     # ),
-# )
-#
-#
-# partition_spec = PartitionSpec(
-#     PartitionField(
-#         source_id=1, field_id=1000, transform=DayTransform(), name="datetime_day"
-#     )
-# )
-#
-# # table = catalog.drop_table("default.taxi_dataset")
-# table = catalog.create_table(
-#     "default.taxi_dataset", schema=schema, partition_spec=partition_spec
-# )
-#
 
-schema = Schema(
+order_schema = Schema(
+    # Start partition
     NestedField(
         field_id=1,
         name="order_purchase_timestamp",
@@ -112,103 +72,527 @@ schema = Schema(
         field_type=TimestampType(),
         required=False,
     ),
+    NestedField(
+        field_id=3,
+        name="order_status",
+        field_type=StringType(),
+        required=False,
+    ),
+    # End parition
+    NestedField(
+        field_id=4,
+        name="order_approved_at",
+        field_type=TimestampType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=5,
+        name="order_delivered_carrier_date",
+        field_type=TimestampType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=6,
+        name="order_estimated_delivery_date",
+        field_type=TimestampType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=7,
+        name="order_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=8,
+        name="customer_id",
+        field_type=StringType(),
+        required=False,
+    ),
 )
 
-# test: pa.Table = pa.Table.from_pydict(
-#     {
-#         "bool": [False, None, True],
-#         "string": ["a", None, "z"],
-#         # Go over the 16 bytes to kick in truncation
-#         "string_long": ["a" * 22, None, "z" * 22],
-#         "int": [1, None, 9],
-#         "long": [1, None, 9],
-#         "float": [0.0, None, 0.9],
-#         "double": [0.0, None, 0.9],
-#         # 'time': [1_000_000, None, 3_000_000],  # Example times: 1s, none, and 3s past midnight #Spark does not support time fields
-#         "timestamp": [
-#             datetime(2023, 1, 1, 19, 25, 00),
-#             None,
-#             datetime(2023, 3, 1, 19, 25, 00),
-#         ],
-#         "timestamptz": [
-#             datetime(2023, 1, 1, 19, 25, 00, tzinfo=timezone.utc),
-#             None,
-#             datetime(2023, 3, 1, 19, 25, 00, tzinfo=timezone.utc),
-#         ],
-#         "date": [date(2023, 1, 1), None, date(2023, 3, 1)],
-#         # Not supported by Spark
-#         # 'time': [time(1, 22, 0), None, time(19, 25, 0)],
-#         # Not natively supported by Arrow
-#         # 'uuid': [uuid.UUID('00000000-0000-0000-0000-000000000000').bytes, None, uuid.UUID('11111111-1111-1111-1111-111111111111').bytes],
-#         "binary": [b"\01", None, b"\22"],
-#         "fixed": [
-#             uuid.UUID("00000000-0000-0000-0000-000000000000").bytes,
-#             None,
-#             uuid.UUID("11111111-1111-1111-1111-111111111111").bytes,
-#         ],
-#     },
-# )
-
-
-partition_spec = PartitionSpec(
+order_partition_spec = PartitionSpec(
     PartitionField(
         source_id=1,
         field_id=1,
         transform=YearTransform(),
         name="order_purchase_timestamp",
     ),
-    # PartitionField(
-    #     source_id=1,
-    #     field_id=1,
-    #     transform=DayTransform(),
-    #     name="order_purchase_timestamp",
-    # ),
+    PartitionField(
+        source_id=2,
+        field_id=2,
+        transform=DayTransform(),
+        name="order_delivered_customer_date",
+    ),
+    PartitionField(
+        source_id=3,
+        field_id=3,
+        transform=IdentityTransform(),
+        name="order_status",
+    ),
+)
+
+# Partition by:
+# order_id: Group items by their associated order.
+# product_id: Partition by product_id for analysis of specific products across multiple orders.
+# shipping_limit_date: Partition by year and month for shipping time analysis.
+
+order_item_schema = Schema(
+    # Start parition
+    NestedField(
+        field_id=1,
+        name="product_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=2,
+        name="shipping_limit_date",
+        field_type=TimestampType(),
+        required=False,
+    ),
+    # End parition
+    NestedField(
+        field_id=3,
+        name="order_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=4,
+        name="order_item_id",
+        field_type=LongType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=5,
+        name="seller_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=6,
+        name="price",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=7,
+        name="freight_value",
+        field_type=DoubleType(),
+        required=False,
+    ),
+)
+
+order_item_select = [
+    "order_id",
+    "order_item_id",
+    "product_id",
+    "seller_id",
+    "shipping_limit_date",
+    "price",
+    "freight_value",
+]
+
+order_item_parittion = PartitionSpec(
+    PartitionField(
+        source_id=1,
+        field_id=1,
+        transform=IdentityTransform(),
+        name="product_id",
+    ),
+    PartitionField(
+        source_id=2,
+        field_id=2,
+        transform=DayTransform(),
+        name="shipping_limit_date",
+    ),
+)
+
+product_schema = Schema(
+    # Start parittion
+    NestedField(
+        field_id=1,
+        name="product_category_name",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=2,
+        name="product_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    # End parittion
+    NestedField(
+        field_id=3,
+        name="product_name_lenght",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=4,
+        name="product_description_lenght",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=5,
+        name="product_photos_qty",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=6,
+        name="product_weight_g",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=7,
+        name="product_length_cm",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=8,
+        name="product_height_cm",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=9,
+        name="product_width_cm",
+        field_type=DoubleType(),
+        required=False,
+    ),
+)
+
+product_partition = PartitionSpec(
+    PartitionField(
+        source_id=1,
+        field_id=1,
+        transform=IdentityTransform(),
+        name="product_category_name",
+    ),
+)
+
+seller_schema = Schema(
+    NestedField(
+        field_id=1,
+        name="seller_state",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=2,
+        name="seller_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=3,
+        name="seller_zip_code_prefix",
+        field_type=LongType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=4,
+        name="seller_city",
+        field_type=StringType(),
+        required=False,
+    ),
+)
+
+seller_partition = PartitionSpec(
+    PartitionField(
+        source_id=1,
+        field_id=1,
+        transform=IdentityTransform(),
+        name="seller_state",
+    ),
+)
+
+geolocation_schema = Schema(
+    # Start parittion
+    NestedField(
+        field_id=1,
+        name="geolocation_state",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=2,
+        name="geolocation_city",
+        field_type=StringType(),
+        required=False,
+    ),
+    # End parittion
+    NestedField(
+        field_id=3,
+        name="geolocation_zip_code_prefix",
+        field_type=LongType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=4,
+        name="geolocation_lat",
+        field_type=DoubleType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=5,
+        name="geolocation_lng",
+        field_type=DoubleType(),
+        required=False,
+    ),
+)
+
+geolocation_partition = PartitionSpec(
+    PartitionField(
+        source_id=1,
+        field_id=1,
+        transform=IdentityTransform(),
+        name="geolocation_state",
+    ),
+    PartitionField(
+        source_id=2,
+        field_id=2,
+        transform=IdentityTransform(),
+        name="geolocation_city",
+    ),
+)
+
+review_schema = Schema(
+    # Start partition
+    NestedField(
+        field_id=1,
+        name="review_creation_date",
+        field_type=TimestampType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=2,
+        name="review_score",
+        field_type=LongType(),
+        required=False,
+    ),
+    # End partition
+    NestedField(
+        field_id=3,
+        name="review_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=4,
+        name="order_id",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=5,
+        name="review_comment_title",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=6,
+        name="review_comment_message",
+        field_type=StringType(),
+        required=False,
+    ),
+    NestedField(
+        field_id=7,
+        name="review_answer_timestamp",
+        field_type=TimestampType(),
+        required=False,
+    ),
+)
+
+review_partition = PartitionSpec(
+    PartitionField(
+        source_id=1,
+        field_id=1,
+        transform=YearTransform(),
+        name="review_creation_date",
+    ),
+    PartitionField(
+        source_id=2,
+        field_id=2,
+        transform=IdentityTransform(),
+        name="review_score",
+    ),
 )
 
 properties: dict[str, Any] = {}
 
-catalog.drop_table("default.taxi_dataset")
-# tbl = catalog.create_table(
-#     "default.taxi_dataset",
-#     schema=test.schema,
+identifier = "ecommerce"
+order_identifier = f"{identifier}.orders"
+order_item_identifier = f"{identifier}.order_items"
+product_identifier = f"{identifier}.products"
+seller_identifier = f"{identifier}.sellers"
+geolocation_identitfier = f"{identifier}.geolocations"
+review_identitfier = f"{identifier}.reviews"
+
+catalog.create_namespace_if_not_exists(identifier)
+
+# Review:
+
+# try:
+#     catalog.drop_table(review_identitfier)
+# except NoSuchTableError:
+#     pass
+#
+# review_tbl = catalog.create_table_if_not_exists(
+#     review_identitfier,
+#     schema=review_schema,
 #     properties=properties,
+#     partition_spec=review_partition,
+# )
+#
+# for review in seeder.generate_review(2):
+#     df = pd.DataFrame(review)
+#     for col in ["review_creation_date", "review_answer_timestamp"]:
+#         df[col] = df[col].astype("datetime64[us]")
+#
+#     table = pa.Table.from_pandas(df)
+#     review_tbl.append(table)
+#
+# data = review_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
+
+# Geolocation:
+
+# try:
+#     catalog.drop_table(geolocation_identitfier)
+# except NoSuchTableError:
+#     pass
+
+# geolocation_tbl = catalog.create_table_if_not_exists(
+#     geolocation_identitfier,
+#     schema=geolocation_schema,
+#     properties=properties,
+#     partition_spec=geolocation_partition,
 # )
 
-tbl = catalog.create_table_if_not_exists(
-    "default.taxi_dataset",
-    schema=schema,
-    properties=properties,
-)
+# batch_size = 10000
+# num_geolocation = len(seeder._geolocation)
+# total_batches = (num_geolocation + batch_size - 1) // batch_size
+#
+# for geolocation in seeder.generate_geolocation(total_batches, batch_size):
+#     df = pd.DataFrame(geolocation)
+#     table = pa.Table.from_pandas(df)
+#     geolocation_tbl.append(table)
 
-# for _ in range(5):
-#     tbl.append(test)
-#     tbl.overwrite(test)
+# data = geolocation_tbl.scan(row_filter="geolocation_city == 'porto acre'").to_duckdb(
+#     "temp"
+# )
+# print(data.sql("select * from temp"))
 
-# for order in seeder.generate_random_orders(2):
-#     df = pd.DataFrame(order_to_dataframe(order))
-#     selected_df = df[["order_purchase_timestamp"]]
-#     print(df)
-#     table: pa.Table = pa.Table.from_pandas(selected_df)
-#     _table.append(table)
+# data = geolocation_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
+
+# try:
+#     catalog.drop_table(seller_identifier)
+# except NoSuchTableError:
+#     pass
+#
+# seller_tbl = catalog.create_table_if_not_exists(
+#     seller_identifier,
+#     schema=seller_schema,
+#     properties=properties,
+#     partition_spec=seller_partition,
+# )
+#
+# for order in seeder.generate_orders(20):
+#     container = []
+#     for item in order.items:
+#         container.append(item.seller.to_dict())
+#
+#     df = pd.DataFrame(container)
+#     table = pa.Table.from_pandas(df)
+#     seller_tbl.append(table)
+#
+# data = seller_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
+
+# Products items:
 
 #
-# orders = seeder.generate_random_orders(1000)
+# try:
+#     catalog.drop_table(product_identifier)
+# except NoSuchTableError:
+#     pass
 #
-# for order in orders:
+# product_tbl = catalog.create_table_if_not_exists(
+#     product_identifier,
+#     schema=product_schema,
+#     properties=properties,
+#     partition_spec=product_partition,
+# )
+#
+# for order in seeder.generate_orders(20):
+#     container = []
+#     for item in order.items:
+#         container.append(item.product.to_dict())
+#
+#     df = pd.DataFrame(container)
+#     table = pa.Table.from_pandas(df)
+#     product_tbl.append(table)
+#
+# data = product_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
+
+# Order items:
+
+# try:
+#     catalog.drop_table(order_item_identifier)
+# except NoSuchTableError:
+#     pass
+#
+# order_item_tbl = catalog.create_table_if_not_exists(
+#     order_item_identifier,
+#     schema=order_item_schema,
+#     properties=properties,
+#     partition_spec=order_item_parittion,
+# )
+#
+# for order in seeder.generate_orders(10):
+#     container = []
+#     for item in order.items:
+#         container.append(item.to_dict())
+#
+#     df = pd.DataFrame(container)
+#     for col in ["shipping_limit_date"]:
+#         df[col] = df[col].astype("datetime64[us]")
+#
+#     table = pa.Table.from_pandas(df)
+#     order_item_tbl.append(table)
+#
+# data = order_item_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
+
+# Order:
+
+# try:
+#     catalog.drop_table(order_identifier)
+# except NoSuchTableError:
+#     pass
+#
+# order_tbl = catalog.create_table_if_not_exists(
+#     order_identifier,
+#     schema=order_schema,
+#     properties=properties,
+#     partition_spec=order_partition_spec,
+# )
+#
+# for order in seeder.generate_orders(5):
 #     df = pd.DataFrame(order_to_dataframe(order))
-#     selected_df = df[['order_purchase_timestamp']]
+#     selected_df = df[order_select]
 #     table = pa.Table.from_pandas(selected_df)
-#     _table.append(table)
-
-last_id = ""
-for order in seeder.generate_orders(5):
-    df = pd.DataFrame(order_to_dataframe(order))
-    selected_df = df[["order_purchase_timestamp", "order_delivered_customer_date"]]
-    table = pa.Table.from_pandas(selected_df)
-    tbl.append(table)
-
-# print("stats", seeder._products)
-# print("last id must be ", last_id)
-
-data = tbl.scan().to_duckdb("temp")
-print(data.sql("select * from temp"))
+#     order_tbl.append(table)
+#
+#
+# data = order_tbl.scan().to_duckdb("temp")
+# print(data.sql("select * from temp"))
