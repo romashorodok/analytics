@@ -2,8 +2,7 @@ import pandas as pd
 import random
 import uuid
 from dataclasses import dataclass, asdict
-from typing import Any, List
-import numpy as np
+from typing import Any, List, Generic, TypeVar, Callable
 
 
 @dataclass
@@ -61,9 +60,6 @@ class OrderItem:
     price: float
     freight_value: float
 
-    product: Product
-    seller: Seller
-
     def to_dict(self):
         return asdict(self)
 
@@ -92,9 +88,38 @@ class Order:
     order_delivered_carrier_date: pd.Timestamp
     order_delivered_customer_date: pd.Timestamp
     order_estimated_delivery_date: pd.Timestamp
-    items: List[OrderItem]
-    payment_details: List[PaymentDetail]
-    review: Review
+
+
+class Generator:
+    def __init__(
+        self, source: pd.DataFrame, mapper: Callable[[Any], pd.DataFrame]
+    ) -> None:
+        self._source = source
+        self._mapper = mapper
+
+    def __generate(self, index: int, batch_size: int) -> tuple[int, list[pd.DataFrame]]:
+        container = []
+
+        for _ in range(batch_size):
+            if index >= len(self._source):
+                break
+
+            row = self._source.iloc[index]
+            index += 1
+
+            container.append(self._mapper(row))
+
+        return index, container
+
+    def batch(self, num: int, batch_size: int = 100):
+        index = 0
+        for _ in range(num):
+            _index, batch = self.__generate(index, batch_size)
+            index = _index
+            yield batch
+
+    def full_batch_params(self, batch_size: int) -> tuple[int, int]:
+        return ((len(self._source) + batch_size - 1) // batch_size, batch_size)
 
 
 class EcommerceSeeder:
@@ -210,7 +235,7 @@ class EcommerceSeeder:
             seller=self.get_seller_by_id(row["seller_id"]),
         )
 
-    def get_review_batch(self, batch_size: int) -> List[Geolocation]:
+    def get_review_batch(self, batch_size: int) -> List[Review]:
         container = []
 
         for _ in range(batch_size):
