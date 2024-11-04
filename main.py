@@ -12,7 +12,12 @@ from pyiceberg.types import (
     StringType,
     NestedField,
 )
+from pyiceberg.expressions import In, And, EqualTo
+from pyiceberg.exceptions import NoSuchTableError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+from cube import Cube, Dimension, JoinOnDimension
 from seeder import (
     Generator,
     Geolocation,
@@ -23,6 +28,7 @@ from seeder import (
     Seller,
 )
 import pandas as pd
+import pyarrow as pa
 
 pg_conn = "postgresql+psycopg2://postgres:postgres@localhost:5432/postgres"
 
@@ -160,6 +166,10 @@ order_item_schema = Schema(
     ),
 )
 
+
+# print(order_schema.fields)
+# print(Dimension(order_schema).fields)
+
 order_item_select = [
     "order_id",
     "order_item_id",
@@ -173,16 +183,23 @@ order_item_select = [
 order_item_parittion = PartitionSpec(
     PartitionField(
         source_id=1,
-        field_id=1,
+        field_id=3,
+        name="order_id",
         transform=IdentityTransform(),
-        name="product_id",
+        required=False,
     ),
-    PartitionField(
-        source_id=2,
-        field_id=2,
-        transform=DayTransform(),
-        name="shipping_limit_date",
-    ),
+    # PartitionField(
+    #     source_id=1,
+    #     field_id=1,
+    #     transform=IdentityTransform(),
+    #     name="product_id",
+    # ),
+    # PartitionField(
+    #     source_id=2,
+    #     field_id=2,
+    #     transform=DayTransform(),
+    #     name="shipping_limit_date",
+    # ),
 )
 
 product_schema = Schema(
@@ -418,6 +435,67 @@ order_identifier = f"{identifier}.orders"
 catalog.create_namespace_if_not_exists(identifier)
 
 
+cube = Cube(
+    {
+        "orders": Dimension(order_identifier, order_schema, order_partition_spec),
+        "order_items": Dimension(
+            order_item_identifier,
+            order_item_schema,
+            order_item_parittion,
+        ),
+    }
+)
+
+
+def fetch_order_items(order_id, on_tbl):
+    """Fetch order items for a given order_id in a separate thread."""
+    join_filter = EqualTo("order_id", order_id)
+    conn = on_tbl.scan(row_filter=join_filter).to_arrow_batch_reader()
+    for batch in conn:
+        resut: pa.RecordBatch = batch
+        print(resut.drop_null())
+
+    return None
+
+
+def on_orders_join_order_items(batch: pa.RecordBatch, on_tbl: Table):
+    df: pd.DataFrame = batch.to_pandas()
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("")
+
+    order_ids = df["order_id"].unique().tolist()
+
+    with ThreadPoolExecutor() as exec:
+        future_to_order_id = {
+            exec.submit(fetch_order_items, order_id, on_tbl): order_id
+            for order_id in order_ids
+        }
+
+        # Collect the results as they complete
+        for future in as_completed(future_to_order_id):
+            try:
+                order_item_df = future.result()
+            except Exception as e:
+                print(
+                    f"Error fetching order items for order_id={future_to_order_id[future]}: {e}"
+                )
+
+    # order_ids = df["order_id"].unique().tolist()
+    #
+    # for order_id in order_ids:
+    #     print(order_ids)
+    #     join_filter = EqualTo("order_id", order_id)
+    #     conn = on_tbl.scan(row_filter=join_filter).to_arrow()
+    #     print(conn)
+
+    return None
+
+
+cube.join(
+    "orders", JoinOnDimension(on_dim_name="order_items", cb=on_orders_join_order_items)
+)
+
+
 def reviews_mapper(row) -> pd.DataFrame:
     row = Review(
         review_id=row.get("review_id"),
@@ -559,68 +637,82 @@ product_generator = Generator(
 )
 
 # for id in [
-#     review_identitfier,
-#     geolocation_identitfier,
-#     seller_identifier,
-#     product_identifier,
+#     # review_identitfier,
+#     # geolocation_identitfier,
+#     # seller_identifier,
+#     # product_identifier,
 #     order_item_identifier,
-#     order_identifier,
+#     # order_identifier,
 # ]:
 #     try:
 #         catalog.drop_table(id)
 #     except NoSuchTableError:
 #         pass
 
-review_tbl = catalog.create_table_if_not_exists(
-    review_identitfier,
-    schema=review_schema,
-    properties=properties,
-    partition_spec=review_partition,
-)
+# review_tbl = catalog.create_table_if_not_exists(
+#     review_identitfier,
+#     schema=review_schema,
+#     properties=properties,
+#     partition_spec=review_partition,
+# )
+#
+# geolocation_tbl = catalog.create_table_if_not_exists(
+#     geolocation_identitfier,
+#     schema=geolocation_schema,
+#     properties=properties,
+#     partition_spec=geolocation_partition,
+# )
+#
+# seller_tbl = catalog.create_table_if_not_exists(
+#     seller_identifier,
+#     schema=seller_schema,
+#     properties=properties,
+#     partition_spec=seller_partition,
+# )
+#
+# product_tbl = catalog.create_table_if_not_exists(
+#     product_identifier,
+#     schema=product_schema,
+#     properties=properties,
+#     partition_spec=product_partition,
+# )
+#
+# order_item_tbl = catalog.create_table_if_not_exists(
+#     order_item_identifier,
+#     schema=order_item_schema,
+#     properties=properties,
+#     partition_spec=order_item_parittion,
+# )
+#
+# order_tbl = catalog.create_table_if_not_exists(
+#     order_identifier,
+#     schema=order_schema,
+#     properties=properties,
+#     partition_spec=order_partition_spec,
+# )
+#
+# tbls: list[tuple[Table, Generator]] = [
+#     # (review_tbl, reviews_generator),
+#     # (geolocation_tbl, geolocation_generator),
+#     # (seller_tbl, seller_generator),
+#     # (product_tbl, product_generator),
+#     # (order_item_tbl, order_items_generator),
+#     # (order_tbl, order_generator),
+# ]
 
-geolocation_tbl = catalog.create_table_if_not_exists(
-    geolocation_identitfier,
-    schema=geolocation_schema,
-    properties=properties,
-    partition_spec=geolocation_partition,
-)
+# orders_conn = order_tbl.scan(limit=10).to_duckdb("orders")
+# print(orders_conn)
+# orders_conn.sql("explain select * from orders").show()
 
-seller_tbl = catalog.create_table_if_not_exists(
-    seller_identifier,
-    schema=seller_schema,
-    properties=properties,
-    partition_spec=seller_partition,
-)
+# batch_reader = order_tbl.scan().to_arrow_batch_reader()
 
-product_tbl = catalog.create_table_if_not_exists(
-    product_identifier,
-    schema=product_schema,
-    properties=properties,
-    partition_spec=product_partition,
-)
+# for reader in batch_reader:
+#     t: pa.RecordBatch = reader
+#     print(t)
+#     # result = t.select(["order_id"])
+#     # print(result)
 
-order_item_tbl = catalog.create_table_if_not_exists(
-    order_item_identifier,
-    schema=order_item_schema,
-    properties=properties,
-    partition_spec=order_item_parittion,
-)
-
-order_tbl = catalog.create_table_if_not_exists(
-    order_identifier,
-    schema=order_schema,
-    properties=properties,
-    partition_spec=order_partition_spec,
-)
-
-tbls: list[tuple[Table, Generator]] = [
-    (review_tbl, reviews_generator),
-    (geolocation_tbl, geolocation_generator),
-    (seller_tbl, seller_generator),
-    (product_tbl, product_generator),
-    (order_item_tbl, order_items_generator),
-    (order_tbl, order_generator),
-]
+# batch_reader.close()
 
 # for tbl, generator in tbls:
 #     # duckdb = tbl.scan().to_duckdb("temp")

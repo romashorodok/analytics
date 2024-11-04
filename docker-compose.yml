@@ -25,3 +25,9 @@ services:
     command: server --console-address ":9001" /data
     volumes:
       - "/data"
+
+  redis:
+    image: redis:8.0-M02-alpine3.20
+    ports:
+      - 6379:6379
+
