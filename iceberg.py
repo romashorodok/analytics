@@ -17,7 +17,6 @@ from pyiceberg.exceptions import NoSuchTableError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-from cube import Cube, Dimension, JoinOnDimension
 from seeder import (
     Generator,
     Geolocation,
@@ -433,67 +432,6 @@ order_item_identifier = f"{identifier}.order_items"
 order_identifier = f"{identifier}.orders"
 
 catalog.create_namespace_if_not_exists(identifier)
-
-
-cube = Cube(
-    {
-        "orders": Dimension(order_identifier, order_schema, order_partition_spec),
-        "order_items": Dimension(
-            order_item_identifier,
-            order_item_schema,
-            order_item_parittion,
-        ),
-    }
-)
-
-
-def fetch_order_items(order_id, on_tbl):
-    """Fetch order items for a given order_id in a separate thread."""
-    join_filter = EqualTo("order_id", order_id)
-    conn = on_tbl.scan(row_filter=join_filter).to_arrow_batch_reader()
-    for batch in conn:
-        resut: pa.RecordBatch = batch
-        print(resut.drop_null())
-
-    return None
-
-
-def on_orders_join_order_items(batch: pa.RecordBatch, on_tbl: Table):
-    df: pd.DataFrame = batch.to_pandas()
-    if not isinstance(df, pd.DataFrame):
-        raise ValueError("")
-
-    order_ids = df["order_id"].unique().tolist()
-
-    with ThreadPoolExecutor() as exec:
-        future_to_order_id = {
-            exec.submit(fetch_order_items, order_id, on_tbl): order_id
-            for order_id in order_ids
-        }
-
-        # Collect the results as they complete
-        for future in as_completed(future_to_order_id):
-            try:
-                order_item_df = future.result()
-            except Exception as e:
-                print(
-                    f"Error fetching order items for order_id={future_to_order_id[future]}: {e}"
-                )
-
-    # order_ids = df["order_id"].unique().tolist()
-    #
-    # for order_id in order_ids:
-    #     print(order_ids)
-    #     join_filter = EqualTo("order_id", order_id)
-    #     conn = on_tbl.scan(row_filter=join_filter).to_arrow()
-    #     print(conn)
-
-    return None
-
-
-cube.join(
-    "orders", JoinOnDimension(on_dim_name="order_items", cb=on_orders_join_order_items)
-)
 
 
 def reviews_mapper(row) -> pd.DataFrame:

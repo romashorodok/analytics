@@ -2,7 +2,7 @@ import pandas as pd
 import random
 import uuid
 from dataclasses import dataclass, asdict
-from typing import Any, List, Generic, TypeVar, Callable
+from typing import Any, List, Callable
 
 
 @dataclass
@@ -231,8 +231,8 @@ class EcommerceSeeder:
             shipping_limit_date=pd.to_datetime(row["shipping_limit_date"]),
             price=float(row["price"]),
             freight_value=float(row["freight_value"]),
-            product=self.get_product_by_id(row["product_id"]),
-            seller=self.get_seller_by_id(row["seller_id"]),
+            # product=self.get_product_by_id(row["product_id"]),
+            # seller=self.get_seller_by_id(row["seller_id"]),
         )
 
     def get_review_batch(self, batch_size: int) -> List[Review]:
@@ -285,15 +285,15 @@ class EcommerceSeeder:
         order_id = row["order_id"]
         customer_id = row["customer_id"]
 
-        items = [
-            self.get_order_item(order_id, item_row)
-            for _, item_row in self._order_items[
-                self._order_items["order_id"] == order_id
-            ].iterrows()
-        ]
-
-        payment_details = [self.get_payment_detail(order_id) for _ in range(1)]
-        review = self.get_review(order_id)
+        # items = [
+        #     self.get_order_item(order_id, item_row)
+        #     for _, item_row in self._order_items[
+        #         self._order_items["order_id"] == order_id
+        #     ].iterrows()
+        # ]
+        #
+        # payment_details = [self.get_payment_detail(order_id) for _ in range(1)]
+        # review = self.get_review(order_id)
 
         return Order(
             order_id=order_id,
@@ -310,9 +310,9 @@ class EcommerceSeeder:
             order_estimated_delivery_date=pd.to_datetime(
                 row["order_estimated_delivery_date"]
             ),
-            items=items,
-            payment_details=payment_details,
-            review=review,
+            # items=items,
+            # payment_details=payment_details,
+            # review=review,
         )
 
     def generate_orders(self, num_orders: int):
@@ -357,8 +357,8 @@ class EcommerceSeeder:
             shipping_limit_date=pd.to_datetime(row["shipping_limit_date"]),
             price=float(row["price"]),
             freight_value=float(row["freight_value"]),
-            product=self.get_product_by_id(row["product_id"]),
-            seller=self.get_seller_by_id(row["seller_id"]),
+            # product=self.get_product_by_id(row["product_id"]),
+            # seller=self.get_seller_by_id(row["seller_id"]),
         )
 
     def get_random_review(self, order_id: str) -> Review:
@@ -378,14 +378,14 @@ class EcommerceSeeder:
         order_id = str(uuid.uuid4())
         customer_id = row["customer_id"]
 
-        items = [
-            self.get_random_order_item(order_id) for _ in range(random.randint(1, 3))
-        ]
-        payment_details = [
-            self.get_random_payment_detail(order_id)
-            for _ in range(random.randint(1, 2))
-        ]
-        review = self.get_random_review(order_id)
+        # items = [
+        #     self.get_random_order_item(order_id) for _ in range(random.randint(1, 3))
+        # ]
+        # payment_details = [
+        #     self.get_random_payment_detail(order_id)
+        #     for _ in range(random.randint(1, 2))
+        # ]
+        # review = self.get_random_review(order_id)
 
         return Order(
             order_id=order_id,
@@ -402,9 +402,9 @@ class EcommerceSeeder:
             order_estimated_delivery_date=pd.to_datetime(
                 row["order_estimated_delivery_date"]
             ),
-            items=items,
-            payment_details=payment_details,
-            review=review,
+            # items=items,
+            # payment_details=payment_details,
+            # review=review,
         )
 
     def generate_random_orders(self, num_orders: int):
