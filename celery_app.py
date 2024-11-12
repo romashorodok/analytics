@@ -1,6 +1,4 @@
 from celery import Celery
-import pyiceberg
-import sqlalchemy
 
 app = Celery("analytics_app", broker="redis://localhost:6379/0")
 
