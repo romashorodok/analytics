@@ -1,3 +1,4 @@
+import uuid
 from seeder import Generator
 from sqlalchemy import (
     create_engine,
@@ -6,6 +7,7 @@ from sqlalchemy import (
     insert,
     Column,
     Integer,
+    Float,
     String,
     DateTime,
 )
@@ -46,8 +48,18 @@ class ApiOrder(Base):
     order_estimated_delivery_date = Column(DateTime, nullable=False)
 
 
-def df_mapper(row) -> pd.DataFrame:
-    return pd.DataFrame([row])
+class ApiOrderItem(Base):
+    __tablename__ = "api_orderitem"
+    id = Column(String, nullable=True, primary_key=True)
+    order_item_id = Column(String, nullable=False)
+    order_id = Column(String, nullable=False)
+    product_id = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    shipping_limit_date = Column(DateTime, nullable=False)
+
+
+# def df_mapper(row) -> pd.DataFrame:
+#     return pd.DataFrame([row])
 
 
 def nat_to_none(timestamp):
@@ -58,9 +70,9 @@ def order_mapper(row) -> pd.DataFrame:
     df = pd.DataFrame(
         [
             {
-                "order_id": pd.to_datetime(row["order_id"]),
-                "customer_id": pd.to_datetime(row["customer_id"]),
-                "order_status": pd.to_datetime(row["order_status"]),
+                "order_id": row["order_id"],
+                "customer_id": row["customer_id"],
+                "order_status": row["order_status"],
                 "order_purchase_timestamp": pd.to_datetime(
                     row["order_purchase_timestamp"]
                 ),
@@ -84,16 +96,60 @@ def order_mapper(row) -> pd.DataFrame:
         "order_delivered_customer_date",
         "order_estimated_delivery_date",
     ]:
-        df[col] = df[col].astype("datetime64[us]").apply(nat_to_none)
+        df[col] = (
+            df[col]
+            .fillna(pd.Timestamp("1970-01-01"))
+            .astype("datetime64[us]")
+            .apply(nat_to_none)
+        )
+
+    df = df.rename(columns=order_columns)
 
     return df
 
 
-generators: list[Generator] = [
-    Generator(
-        pd.read_csv("dataset/olist_orders_dataset.csv"),
-        df_mapper,
+def order_item_mapper(row) -> pd.DataFrame:
+    df = pd.DataFrame(
+        [
+            {
+                "id": str(uuid.uuid4()),
+                "order_item_id": str(row["order_item_id"]),
+                "order_id": row["order_id"],
+                "product_id": row["product_id"],
+                "price": row["price"],
+                "shipping_limit_date": pd.to_datetime(row["shipping_limit_date"]),
+            }
+        ]
     )
+
+    for col in [
+        "shipping_limit_date",
+    ]:
+        df[col] = (
+            df[col]
+            .fillna(pd.Timestamp("1970-01-01"))
+            .astype("datetime64[us]")
+            .apply(nat_to_none)
+        )
+
+    return df
+
+
+generators: list[tuple[Generator, type[Base]]] = [
+    (
+        Generator(
+            pd.read_csv("dataset/olist_orders_dataset.csv"),
+            order_mapper,
+        ),
+        ApiOrder,
+    ),
+    (
+        Generator(
+            pd.read_csv("dataset/olist_order_items_dataset.csv"),
+            order_item_mapper,
+        ),
+        ApiOrderItem,
+    ),
 ]
 
 
@@ -101,42 +157,24 @@ database_manager = DatabaseSessionManager(PostgresDatabaseConfig().get_uri())
 
 
 async def main():
-    for generator in generators:
-        nums, batch_size = generator.full_batch_params(2000)
+    for generator, schema in generators:
+        nums, batch_size = generator.full_batch_params(4000)
 
         for batch in generator.batch(nums, batch_size):
             df = pd.concat(batch, ignore_index=True)
-            df = df.rename(columns=order_columns)
-            selected_columns = df[list(order_columns.values())]
-
-            for column in [
-                "order_purchase_timestamp",
-                "order_approved_at",
-                "order_delivered_carrier_date",
-                "order_delivered_customer_date",
-                "order_estimated_delivery_date",
-            ]:
-                if selected_columns[column] is None:
-                    raise ValueError("Catch None")
-
-                selected_columns[column] = pd.to_datetime(selected_columns[column])
-
-                selected_columns[column] = selected_columns[column].fillna(
-                    pd.Timestamp("1970-01-01")
-                )
 
             async with database_manager.session() as conn:
-                data = selected_columns.to_dict("records")
+                data = df.to_dict("records")
 
-                orders = []
+                items = []
                 for row in data:
                     try:
-                        order = ApiOrder(**row)  # Unpack dictionary
-                        orders.append(order)
+                        item = schema(**row)  # Unpack dictionary
+                        items.append(item)
                     except TypeError as e:
                         print(f"Error creating ApiOrder from row: {row}. Error: {e}")
 
-                conn.add_all(orders)
+                conn.add_all(items)
                 await conn.commit()
 
 
